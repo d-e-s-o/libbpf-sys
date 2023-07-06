@@ -23,6 +23,11 @@ jobs:
             os-arch: arm64
             features: ''
 
+          - rust-target: armv7-unknown-linux-gnueabihf
+            os-target: arm-linux-gnueabihf
+            os-arch: armhf
+            features: ''
+
           - rust-target: powerpc64le-unknown-linux-gnu
             os-target: powerpc64le-linux-gnu
             os-arch: ppc64el
