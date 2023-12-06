@@ -91,7 +91,10 @@ fn library_prefix() -> String {
 }
 
 fn pkg_check(pkg: &str) {
-    if process::Command::new(pkg).status().is_err() {
+    let mut cmd = process::Command::new("sh");
+    cmd.args(["-c", "command", "-v", pkg]);
+
+    if cmd.status().is_err() {
         panic!(
             "{} is required to compile libbpf-sys using the vendored copy of libbpf",
             pkg
