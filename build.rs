@@ -7,6 +7,7 @@ use std::fs::read_dir;
 use std::path;
 use std::path::Path;
 use std::process;
+use std::process::ExitStatus;
 
 use nix::fcntl;
 
@@ -151,10 +152,10 @@ fn main() {
         pkg_check("flex");
         pkg_check("bison");
         pkg_check("gawk");
+        pkg_check("aclocal");
     }
 
     let (compiler, mut cflags) = if vendored_libbpf || vendored_libelf || vendored_zlib {
-        pkg_check("make");
         pkg_check("pkg-config");
 
         let compiler = cc::Build::new().try_get_compiler().expect(
@@ -213,45 +214,70 @@ fn main() {
     }
 }
 
-fn make_zlib(compiler: &cc::Tool, src_dir: &path::Path, out_dir: &path::Path) {
-    let src_dir = src_dir.join("zlib");
+fn make_zlib(compiler: &cc::Tool, src_dir: &path::Path, _: &path::Path) {
     // lock README such that if two crates are trying to compile
     // this at the same time (eg libbpf-rs libbpf-cargo)
     // they wont trample each other
-    let file = std::fs::File::open(src_dir.join("README")).unwrap();
+    let file = std::fs::File::open(src_dir.join("README.md")).unwrap();
     let _lock = fcntl::Flock::lock(file, fcntl::FlockArg::LockExclusive).unwrap();
 
-    let status = process::Command::new("./configure")
-        .arg("--static")
-        .arg("--prefix")
-        .arg(".")
-        .arg("--libdir")
-        .arg(out_dir)
-        .env("CC", compiler.path())
-        .env("CFLAGS", compiler.cflags_env())
-        .current_dir(&src_dir)
-        .status()
-        .expect("could not execute make");
+    let zlib_sources = [
+        "adler32.c",
+        "compress.c",
+        "crc32.c",
+        "deflate.c",
+        "gzclose.c",
+        "gzlib.c",
+        "gzread.c",
+        "gzwrite.c",
+        "infback.c",
+        "inffast.c",
+        "inflate.c",
+        "inftrees.c",
+        "trees.c",
+        "uncompr.c",
+        "zutil.c",
+    ];
 
-    assert!(status.success(), "make failed");
+    let cflags = [
+        // We do support hidden visibility, so turn that on.
+        "-DHAVE_HIDDEN",
+        // We do support const, so turn that on.
+        "-DZLIB_CONST",
+        // Enable -O3 as per chromium.
+        "-O3",
+        // "-Wall",
+        // "-Werror",
+        // "-Wno-deprecated-non-prototype",
+        // "-Wno-unused",
+        // "-Wno-unused-parameter",
+    ];
 
-    let status = process::Command::new("make")
-        .arg("install")
-        .arg("-j")
-        .arg(&format!("{}", num_cpus()))
-        .current_dir(&src_dir)
-        .status()
-        .expect("could not execute make");
+    let project_dir = src_dir.join("zlib");
+    let project_dir = project_dir.to_str().unwrap();
 
-    assert!(status.success(), "make failed");
+    configure(project_dir, &[]);
 
-    let status = process::Command::new("make")
-        .arg("distclean")
-        .current_dir(&src_dir)
-        .status()
-        .expect("could not execute make");
+    let mut builder = cc::Build::new();
 
-    assert!(status.success(), "make failed");
+    builder.include(project_dir).files({
+        zlib_sources
+            .iter()
+            .map(|source| format!("{project_dir}/{source}"))
+    });
+
+    if build_android() {
+        for flag in cflags {
+            builder.flag(flag);
+        }
+    } else {
+        for flag in compiler.args() {
+            builder.flag(flag);
+        }
+    }
+
+    builder.flag_if_supported("-w").warnings(false).compile("z");
+
     emit_rerun_directives_for_contents(&src_dir);
 }
 
@@ -407,4 +433,32 @@ fn build_android() -> bool {
     env::var("CARGO_CFG_TARGET_OS")
             .expect("CARGO_CFG_TARGET_OS not set")
             .eq("android")
+}
+
+fn configure<P>(project_dir: P, args: &[&str])
+where
+    P: AsRef<str>,
+{
+    let project = project_dir.as_ref();
+
+    let prog = "./configure";
+
+    let _ = subproc("chmod", project, &["+x", prog]);
+
+    let status = subproc(prog, project, args);
+
+    assert!(
+        status.success(),
+        "configure({}) failed: {}",
+        project,
+        status
+    );
+}
+
+fn subproc(prog: &str, workdir: &str, args: &[&str]) -> ExitStatus {
+    process::Command::new(prog)
+        .current_dir(workdir)
+        .args(args)
+        .status()
+        .expect(&format!("could not execute `{prog}`"))
 }
