@@ -111,6 +111,7 @@ fn pkg_check(pkg: &str) {
 
 fn main() {
     let src_dir = path::PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
 
     generate_bindings(src_dir.clone());
 
@@ -156,8 +157,9 @@ fn main() {
             "a C compiler is required to compile libbpf-sys using the vendored copy of libbpf",
         );
         let mut cflags = compiler.cflags_env();
-        println!("cargo:rerun-if-env-changed=LIBBPF_SYS_EXTRA_CFLAGS");
-        if let Some(extra_cflags) = env::var_os("LIBBPF_SYS_EXTRA_CFLAGS") {
+        let sys_cflags_var = format!("LIBBPF_SYS_EXTRA_CFLAGS_{arch}");
+        println!("cargo:rerun-if-env-changed={sys_cflags_var}");
+        if let Some(extra_cflags) = env::var_os(sys_cflags_var) {
             cflags.push(" ");
             cflags.push(extra_cflags);
         }
@@ -198,8 +200,9 @@ fn main() {
     );
     println!("cargo:include={}/include", out_dir.to_string_lossy());
 
-    println!("cargo:rerun-if-env-changed=LIBBPF_SYS_LIBRARY_PATH");
-    if let Ok(lib_path) = env::var("LIBBPF_SYS_LIBRARY_PATH") {
+    let sys_path_var = format!("LIBBPF_SYS_LIBRARY_PATH_{arch}");
+    println!("cargo:rerun-if-env-changed={sys_path_var}");
+    if let Ok(lib_path) = env::var(sys_path_var) {
         for path in lib_path.split(':') {
             if !path.is_empty() {
                 println!("cargo:rustc-link-search=native={}", path);
